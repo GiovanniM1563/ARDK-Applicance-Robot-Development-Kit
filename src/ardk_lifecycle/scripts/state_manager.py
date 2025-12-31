@@ -143,6 +143,7 @@ class StateManager(Node):
         if self.nav_proc:
             nav_runner.stop(self.nav_proc)
             self.nav_proc = None
+            self.nav_lifecycle_active = False
 
     # --- Transitions ---
 
@@ -217,6 +218,7 @@ class StateManager(Node):
                  # Principle 1: This should not happen in resident mode
                  self.get_logger().warn("Nav2 process missing during transition!")
                  self.nav_proc = nav_runner.start(self._nav2_cmd)
+                 self.nav_lifecycle_active = False
                  wait_for_services(self, 60.0, "/lifecycle_manager_localization/manage_nodes")
 
             # 3. Startup Sequence (Principle 3)
