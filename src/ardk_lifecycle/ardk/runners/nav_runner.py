@@ -34,12 +34,14 @@ def load_map(node: Node, map_yaml: str, timeout_sec: float = 5.0, client=None) -
     req.map_url = map_yaml
     fut = client.call_async(req)
     if node.executor:
+        node.get_logger().info(f"DEBUG: Using executor loop for LoadMap")
         start_time = time.time()
         while not fut.done():
             if time.time() - start_time > timeout_sec:
                 break
             time.sleep(0.1)
     else:
+        node.get_logger().info(f"DEBUG: Using spin_until for LoadMap")
         rclpy.spin_until_future_complete(node, fut, timeout_sec=timeout_sec)
     
     if not fut.done():

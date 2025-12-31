@@ -25,6 +25,7 @@ class StateManager(Node):
         super().__init__('state_manager')
         
         self.state = SetMode.Request.IDLE
+        self.nav_lifecycle_active = False # Track if Nav lifecycles are UP or DOWN
         self.lock = threading.Lock()
         
         # Process Handles
@@ -154,8 +155,12 @@ class StateManager(Node):
             self.slam_proc = None
             
         if self.nav_proc:
-            self.get_logger().info("Shutting down Nav stacks (Cycle Down)...")
-            nav_runner.shutdown_loc_nav(self, timeout_sec=20.0)
+            if self.nav_lifecycle_active:
+                self.get_logger().info("Shutting down Nav stacks (Cycle Down)...")
+                nav_runner.shutdown_loc_nav(self, timeout_sec=60.0, client_loc=self.cli_loc, client_nav=self.cli_nav)
+                self.nav_lifecycle_active = False
+            else:
+                self.get_logger().info("Nav stacks already down (Skipping shutdown).")
             # Do NOT stop the process
             
         return True, "Switched to IDLE"
@@ -170,7 +175,11 @@ class StateManager(Node):
             # To strictly follow Principle 5, runners should take clients. 
             # For this pass, we rely on runners creating temp clients or refactor runners later.
             # To save time, we let runners do it but acknowledge warm client optimization is for LoadMap/Save primarily.
-            nav_runner.shutdown_loc_nav(self, timeout_sec=20.0, client_loc=self.cli_loc, client_nav=self.cli_nav)
+            if self.nav_lifecycle_active:
+                nav_runner.shutdown_loc_nav(self, timeout_sec=60.0, client_loc=self.cli_loc, client_nav=self.cli_nav)
+                self.nav_lifecycle_active = False
+            else:
+                self.get_logger().info("Nav stacks already down (Skipping shutdown).")
             
         if not self.slam_proc:
             self.get_logger().info("Starting SLAM Toolbox...")
@@ -187,55 +196,83 @@ class StateManager(Node):
     def _to_navigation(self, req):
         self._stop_motion()
         
-        # 1. Save Map if coming from Mapping
-        if self.slam_proc:
-            self.get_logger().info(f"Saving map...")
-            path = req.map_yaml_path if req.map_yaml_path else "/home/gio/ARDK_2/maps/autosave"
-            
-            # Principle 4: Check map freshness (replaces sleep)
-            # Simple check: wait for /map to be published (we did at start of mapping)
-            # Better check: wait for one more message? 
-            # For now, we assume if we are in mapping, map is publishing.
-            
-            # Use persistent client? Runners handle clients currently.
-            slam_runner.save_map(self, path)
-            
-            self.get_logger().info("Stopping SLAM...")
-            slam_runner.stop(self.slam_proc)
-            self.slam_proc = None
-            
-            # Principle 2: Exclusivity Invariant
-            # Verify SLAM is dead? 
-            time.sleep(1.0) # Short micro-sleep to ensure process death (Principle 2 best effort for now)
-            
-        # 2. Resident Nav2 Check
-        if not self.nav_proc:
-             # Principle 1: This should not happen in resident mode
-             self.get_logger().warn("Nav2 process missing during transition!")
-             self.nav_proc = nav_runner.start(self._nav2_cmd)
-             wait_for_services(self, 60.0, "/lifecycle_manager_localization/manage_nodes")
+        try:
+            # 1. Save Map if coming from Mapping
+            if self.slam_proc:
+                self.get_logger().info(f"Saving map...")
+                path = req.map_yaml_path if req.map_yaml_path else "/home/gio/ARDK_2/maps/autosave"
+                
+                # Principle 4: Check map freshness (replaces sleep)
+                slam_runner.save_map(self, path)
+                
+                self.get_logger().info("Stopping SLAM...")
+                slam_runner.stop(self.slam_proc)
+                self.slam_proc = None
+                
+                # Principle 2: Exclusivity Invariant
+                time.sleep(1.0) 
+                
+            # 2. Resident Nav2 Check
+            if not self.nav_proc:
+                 # Principle 1: This should not happen in resident mode
+                 self.get_logger().warn("Nav2 process missing during transition!")
+                 self.nav_proc = nav_runner.start(self._nav2_cmd)
+                 wait_for_services(self, 60.0, "/lifecycle_manager_localization/manage_nodes")
 
-        # 3. Startup Sequence (Principle 3)
-        # A) Localization (brings up map_server)
-        self.get_logger().info("Starting Localization...")
-        # Pass persistent client (Principle 5)
-        nav_runner.startup_localization(self, timeout_sec=30.0, client=self.cli_loc)
-        
-        # B) Load Map
-        map_path = req.map_yaml_path if req.map_yaml_path else "/home/gio/ARDK_2/maps/autosave.yaml"
-        self.get_logger().info(f"Loading map: {map_path}")
-        wait_for_services(self, 20.0, "/map_server/load_map")
-        nav_runner.load_map(self, map_path, client=self.cli_load_map)
-        
-        # C) Navigation
-        self.get_logger().info("Starting Navigation...")
-        nav_runner.startup_navigation(self, timeout_sec=30.0, client=self.cli_nav)
-        
-        # 4. Wait Readiness (tf chain)
-        self.get_logger().info("Verifying Readiness...")
-        wait_for_tf_chain(self, self.tf_buffer, 10.0, "map", "odom", "base_link")
-        
-        return True, "Switched to NAVIGATION"
+            # 3. Startup Sequence (Principle 3)
+            # A) Localization (brings up map_server)
+            self.get_logger().info("Starting Localization...")
+            # Pass persistent client (Principle 5)
+            nav_runner.startup_localization(self, timeout_sec=40.0, client=self.cli_loc)
+            # Partial active state (Loc up, Nav down). We track full active only at end?
+            # Or we track partial? For simplicity, if we fail, we call shutdown anyway.
+            # So just ensuring we mark active=True only if success. 
+            # BUT if we start Loc, then we are partially active. 
+            # If rollback happens, we call shutdown, which sets active=False. Correct.
+            
+            # B) Load Map (Robustness: Retry Logic)
+            map_path = req.map_yaml_path if req.map_yaml_path else "/home/gio/ARDK_2/maps/autosave.yaml"
+            self.get_logger().info(f"Loading map: {map_path}")
+            
+            # Robustness: Wait longer for map_server service (RPi constraints)
+            wait_for_services(self, 30.0, "/map_server/load_map")
+            
+            # Robustness: Retry Loop
+            for attempt in range(3):
+                try:
+                    nav_runner.load_map(self, map_path, client=self.cli_load_map)
+                    break
+                except Exception as e:
+                    if attempt == 2: raise e
+                    self.get_logger().warn(f"LoadMap failed (attempt {attempt+1}/3): {e}. Retrying...")
+                    time.sleep(1.0)
+            
+            # C) Navigation
+            self.get_logger().info("Starting Navigation...")
+            nav_runner.startup_navigation(self, timeout_sec=40.0, client=self.cli_nav)
+            self.nav_lifecycle_active = True
+            
+            # 4. Wait Readiness (tf chain)
+            self.get_logger().info("Verifying Readiness...")
+            wait_for_tf_chain(self, self.tf_buffer, 15.0, "map", "odom", "base_link")
+            
+            return True, "Switched to NAVIGATION"
+            
+        except Exception as e:
+            self.get_logger().error(f"Navigation Transition Failed: {e}. ROLLING BACK TO IDLE.")
+            # Atomic Rollback: Cleanup any partial state
+            # Atomic Rollback: Cleanup any partial state
+            try:
+                # Ensure Nav lifecycle is down if we failed halfway
+                if self.nav_proc:
+                     nav_runner.shutdown_loc_nav(self, timeout_sec=60.0, client_loc=self.cli_loc, client_nav=self.cli_nav)
+                     self.nav_lifecycle_active = False
+            except:
+                pass
+            
+            # If we were strictly successfully in MAPPING before, maybe go back to mapping? 
+            # No, safest is IDLE. User wants NO partials.
+            return False, f"Transition Aborted: {e}"
 
 def main():
     rclpy.init()
