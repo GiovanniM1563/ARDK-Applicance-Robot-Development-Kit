@@ -1,12 +1,18 @@
 # ARDK Lifecycle & Mode Management System
 
-**"Beyond Smoke Tests: A Hardened, Resident Architecture for RPi Robotics"**
+**"Appliance Robot Development Kit"**
 
-This repository contains the hardened lifecycle management system for ARDK robots. It solves the critical problem of switching between `MAPPING` (SLAM) and `NAVIGATION` (Nav2) on resource-constrained hardware (e.g., Raspberry Pi 4/5) with minimal latency and high reliability.
+
+The point of this project is to create a readymade, easy to use system that allows individuals to accelerate the arbitrary setup of ROS 2 robots, to allow them to focus on their own unique applications or additions. 
+
+Ideally, this system should be able to solve the "boring" parts of ROS2 integration, such as in this case, switching and orchestrating between different stacks on the fly, without the need to use ROS 2 CLI tools or create your own scripts to do so.
+
+
+This repository contains the hardened lifecycle management system for ROS2 robots. It solves a problem I faced, switching between `MAPPING` (SLAM_Toolbox) and `NAVIGATION` (Nav2) actively and frequently.
 
 ---
 
-## 🚀 Key Features
+##  Key Features
 
 ### 1. Resident Nav2 Architecture
 - **Problem**: Launching Nav2 from scratch takes 30-45 seconds on RPi and consumes massive CPU/DDS resources.
@@ -15,13 +21,13 @@ This repository contains the hardened lifecycle management system for ARDK robot
 
 ### 2. Strict "No Partial Startups"
 - **Atomic Rollback**: If ANY step of a transition fails (e.g., Map Load timeout, Service unavailability), the system **automatically** rolls back to `IDLE`.
-- **Zero Zombie Processes**: Custom signal handling ensures all subprocesses (SLAM, Nav2 container) are cleanly killed on exit.
+- **Zero Zombie Processes**: signal handling ensures all subprocesses (SLAM, Nav2 container) are cleanly killed on exit.
 
 ### 3. Smooth & Safe Transitions
-- **Event-Driven Gates**: Replaced all `time.sleep()` calls with active checks:
+- **Event-Driven Gates**: active checks of real conditions before transition:
     - `wait_for_topic('/map')`: Ensures SLAM is actually publishing.
     - `wait_for_tf_chain(...)`: Ensures the full `map -> odom -> base_link` tree is valid before handing control to Nav2.
-- **Motion Guard**: Every mode switch automatically forces `cmd_vel` to zero to prevent runaway motion.
+- **Motion Guard**: Every mode transition automatically forces `cmd_vel` to zero to prevent runaway motion.
 
 ### 4. Robustness for Edge Hardware
 - **Retry Logic**: Critical services (like `load_map`) utilize a 3-try backoff mechanism to handle disk/DDS latency on SD cards.
@@ -29,7 +35,7 @@ This repository contains the hardened lifecycle management system for ARDK robot
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ### Core Components
 
@@ -99,12 +105,27 @@ map_source: "map_server"
 tf_authority: "amcl"
 motion_authority: "nav2"
 ```
+### 4. Finer Usage
 
----
+Nav2 and SLAM Toolbox are both controlled through their own APIs, and can be used independently of the state manager to get desired functionalities. 
 
-## ✅ Verification
 
-The system includes a rigorous verification script (`tests/cycle_test.py`) that performs a full operational cycle:
+## Future WIP
+
+The system is currently in a proof of concept stage and is not yet ready for production use. Future work includes:
+
+- Building a ROS 2 package for the state manager
+- Adding support for more operation modes and modular configurations to add your own modes
+- Adding rosbridge support to allow remote triggers of mode changes
+- adding helpers for Nav2 and SLAM Toolbox native APIs to allow for more fine-grained control
+
+
+
+
+
+## Verification
+
+The system includes a verification script (`tests/cycle_test.py`) that performs a full operational cycle:
 
 ```bash
 # Run the automated verification
