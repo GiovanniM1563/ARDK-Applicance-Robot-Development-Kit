@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="gnoel949@gmail.com">gio</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Proprietary</license>
 
   <depend>rclpy</depend>
   <depend>ardk_lifecycle</depend>

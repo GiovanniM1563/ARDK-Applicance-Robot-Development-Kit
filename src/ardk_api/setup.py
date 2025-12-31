@@ -16,7 +16,7 @@ setup(
     maintainer='gio',
     maintainer_email='gnoel949@gmail.com',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='Proprietary',
     extras_require={
         'test': [
             'pytest',
