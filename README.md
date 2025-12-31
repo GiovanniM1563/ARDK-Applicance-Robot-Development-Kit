@@ -4,7 +4,7 @@
 
 This project implements a lightweight deterministic orchestration layer designed to simplify the complex task of managing robot states in ROS 2. It provides a robust, fail-safe mechanism for switching between Mapping (SLAM) and Navigation modes without the fragility often associated with custom scripts or manual CLI commands.
 
-Future work will involve creating a command mux for orchestrated movement control as well.
+Future work will involve creating a command mux for orchestrated movement control.
 
 This project aims to treat the robot's navigation stack as a reliable "black box" appliance, focusing on their unique application logic rather than the low-level intricacies of ROS 2 lifecycle management.
 
