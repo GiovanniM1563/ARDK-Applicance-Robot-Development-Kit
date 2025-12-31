@@ -58,26 +58,19 @@ class StateManager(Node):
         
         self.get_logger().info("ARDK State Manager Ready. Current State: IDLE")
         
-        # Resident Nav2: Start once, keep alive. (Principle 1)
-        # Use Composition to save DDS resource/participants
+        # On-Demand Nav2: Build command but don't start yet
         nav_config = self.get_parameter("nav_config_path").value
         map_path = self.get_parameter("default_map_path").value
         if map_path and not map_path.endswith(".yaml"):
             map_path += ".yaml"
-        # We assume user passes map path in request, or we use default
         
         self._nav2_cmd = (
             "ros2 launch nav2_bringup bringup_launch.py "
             "use_sim_time:=false autostart:=false use_composition:=True "
             f"params_file:={nav_config} map:={map_path}"
         )
-        self.get_logger().info(f"Nav2 CMD: {self._nav2_cmd}")
-        self.nav_proc = nav_runner.start(self._nav2_cmd)
-        
-        # Initial wait for services (one time cost)
-        wait_for_services(self, 120.0, 
-                          "/lifecycle_manager_localization/manage_nodes",
-                          "/lifecycle_manager_navigation/manage_nodes")
+        self.get_logger().info(f"Nav2 CMD (prepared): {self._nav2_cmd}")
+        # Nav2 will be started on first transition to NAVIGATION
 
         # Status Loop
         self.create_timer(1.0, self._publish_status)
@@ -154,6 +147,7 @@ class StateManager(Node):
         self.get_logger().error("ENTERING FAULT STATE - KILLING EVERYTHING")
         self._stop_motion()
         if self.slam_proc:
+            slam_runner.deactivate(self)  # Graceful lifecycle shutdown
             slam_runner.stop(self.slam_proc)
             self.slam_proc = None
         if self.nav_proc:
@@ -167,7 +161,8 @@ class StateManager(Node):
         self._stop_motion()
         
         if self.slam_proc:
-            self.get_logger().info("Stopping SLAM...")
+            self.get_logger().info("Stopping SLAM (graceful lifecycle shutdown)...")
+            slam_runner.deactivate(self)
             slam_runner.stop(self.slam_proc)
             self.slam_proc = None
             
@@ -203,14 +198,19 @@ class StateManager(Node):
              self.get_logger().warn("slam_config_path param not set! SLAM might fail.")
         
         try:
-            # 2. Start SLAM (Process)
+            # 2. Start SLAM (Process with autostart:=false for lifecycle control)
             self.get_logger().info("Starting SLAM Toolbox...")
             self.slam_proc = slam_runner.start(params_yaml=slam_config)
             
-            # 3. Wait for Readiness Gate (No Sleep)
+            # 3. Activate SLAM lifecycle (configure + activate)
+            self.get_logger().info("Activating SLAM lifecycle...")
+            time.sleep(2.0)  # Wait for node to appear in graph
+            slam_runner.activate(self, timeout_sec=15.0)
+            
+            # 3. Wait for Readiness Gate (Map topic indicates SLAM is active)
             self.get_logger().info("Waiting for Map Topic...")
-            # Polling instead of sleep
-            wait_for_topic(self, 10.0, '/map')
+            wait_for_topic(self, 30.0, '/map')
+
             
         except Exception as e:
             return False, f"Failed to start SLAM: {e}"
@@ -229,20 +229,23 @@ class StateManager(Node):
                 self.get_logger().info(f"Saving map to: {path}")
                 slam_runner.save_map(self, path)
                 
-                self.get_logger().info("Stopping SLAM...")
+                self.get_logger().info("Stopping SLAM (graceful lifecycle shutdown)...")
+                slam_runner.deactivate(self)
                 slam_runner.stop(self.slam_proc)
                 self.slam_proc = None
                 
                 # Principle 2: Exclusivity Invariant
                 time.sleep(1.0) 
                 
-            # 2. Resident Nav2 Check
+            # 2. Start Nav2 if not running (On-Demand)
             if not self.nav_proc:
-                 # Principle 1: This should not happen in resident mode
-                 self.get_logger().warn("Nav2 process missing during transition!")
-                 self.nav_proc = nav_runner.start(self._nav2_cmd)
-                 self.nav_lifecycle_active = False
-                 wait_for_services(self, 60.0, "/lifecycle_manager_localization/manage_nodes")
+                self.get_logger().info("Starting Nav2 stack...")
+                self.nav_proc = nav_runner.start(self._nav2_cmd)
+                self.nav_lifecycle_active = False
+                self.get_logger().info("Waiting for Nav2 services...")
+                wait_for_services(self, 120.0, 
+                                  "/lifecycle_manager_localization/manage_nodes",
+                                  "/lifecycle_manager_navigation/manage_nodes")
 
             # 3. Startup Sequence (Principle 3)
             # A) Localization (brings up map_server)
