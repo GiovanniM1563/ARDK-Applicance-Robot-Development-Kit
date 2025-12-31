@@ -127,8 +127,13 @@ class StateManager(Node):
         """Principle 7: Motion Safe Primitive"""
         msg = Twist()
         # Publish zero velocity
-        for _ in range(5):
-            self.vel_pub.publish(msg)
+        try:
+            for _ in range(5):
+                self.vel_pub.publish(msg)
+                # time.sleep(0.05) # Blocking in callback? 
+                # Better to just publish a few times quickly.
+        except Exception:
+            pass # Ignore publishing errors during fault/teardown
             time.sleep(0.05)
         
         # Todo: Cancel Nav2 goals if we had that client accessible/needed
@@ -248,6 +253,11 @@ class StateManager(Node):
                     if attempt == 2: raise e
                     self.get_logger().warn(f"LoadMap failed (attempt {attempt+1}/3): {e}. Retrying...")
                     time.sleep(1.0)
+            
+            # C) Wait for Map (Readiness Gate)
+            # The map must be available before we start Navigation (Planner)
+            self.get_logger().info("Waiting for Map Topic...")
+            wait_for_topic(self, 15.0, '/map')
             
             # C) Navigation
             self.get_logger().info("Starting Navigation...")

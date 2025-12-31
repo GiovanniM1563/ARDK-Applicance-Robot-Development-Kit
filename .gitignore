@@ -9,3 +9,7 @@ maps/
 build/
 install/
 log/
+
+# Smoke tests
+nav2_smoke_auto.py
+slam_toolbox_smoke_auto.py

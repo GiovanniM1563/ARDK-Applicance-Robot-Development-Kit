@@ -13,7 +13,11 @@ def wait_for_services(node: Node, timeout_sec: float, *service_names: str) -> No
         available = set(name for (name, _) in node.get_service_names_and_types())
         if all(s in available for s in service_names):
             return
-        rclpy.spin_once(node, timeout_sec=0.1)
+        # rclpy.spin_once(node, timeout_sec=0.1)  # Warning: Dangerous inside callbacks
+        # We should just sleep if we are in a threaded executor context, as discovery runs in RMW background
+        # But to be safe vs legacy single threaded, spin_once is "okay" usually.
+        # However, for robustness on RPi with MultiThreadedExecutor, sleep is safer.
+        time.sleep(0.1)
     
     available = set(name for (name, _) in node.get_service_names_and_types())
     missing = [s for s in service_names if s not in available]
@@ -29,7 +33,7 @@ def wait_for_topic(node: Node, timeout_sec: float, topic_name: str) -> None:
         topics = dict(node.get_topic_names_and_types())
         if topic_name in topics:
             return
-        rclpy.spin_once(node, timeout_sec=0.1)
+        time.sleep(0.1)
     raise RuntimeError(f"Timeout waiting for topic: {topic_name}")
 
 def wait_for_tf_chain(node: Node, tf_buffer, timeout_sec: float, frame_map: str, frame_odom: str, frame_base: str) -> None:

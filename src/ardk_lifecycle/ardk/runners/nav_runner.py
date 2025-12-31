@@ -18,7 +18,7 @@ def start(nav2_cmd: str) -> subprocess.Popen:
     Must contain 'autostart:=true' if you want it to come up fully, 
     OR 'autostart:=false' if you want manual control (which we support via startup_loc_nav).
     """
-    return start_process(nav2_cmd)
+    return start_process(nav2_cmd, stdout=None, stderr=None)
 
 def load_map(node: Node, map_yaml: str, timeout_sec: float = 5.0, client=None) -> None:
     """
@@ -64,7 +64,8 @@ def startup_localization(node: Node, timeout_sec: float = 20.0, client=None) -> 
 def shutdown_localization(node: Node, timeout_sec: float = 20.0, client=None) -> None:
     _manage_lifecycle(node, SRV_LOC, ManageLifecycleNodes.Request.SHUTDOWN, timeout_sec, client)
 
-def startup_navigation(node: Node, timeout_sec: float = 20.0, client=None) -> None:
+def startup_navigation(node: Node, timeout_sec: float = None, client=None) -> None:
+    # timeout_sec is ignored now in favor of deterministic wait
     _manage_lifecycle(node, SRV_NAV, ManageLifecycleNodes.Request.STARTUP, timeout_sec, client)
 
 def shutdown_navigation(node: Node, timeout_sec: float = 20.0, client=None) -> None:
@@ -128,19 +129,29 @@ def _manage_lifecycle(node: Node, service_name: str, command: int, timeout_sec: 
         
     req = ManageLifecycleNodes.Request()
     req.command = command
+    # Deterministic Wait: We wait indefinitely (or very long) for the Lifecycle Manager
+    # to confirm transition. The Lifecycle Manager itself has internal timeouts (bond_timeout)
+    # that will cause it to fail if nodes are unresponsive. We rely on that.
+    # We use a loop to provide feedback/logging if it takes a while.
+    
+    start_time = time.time()
+    node.get_logger().info(f"Calling {service_name} (Deterministic Wait)...")
     fut = client.call_async(req)
-    if node.executor:
-        start_time = time.time()
-        while not fut.done():
-            if time.time() - start_time > timeout_sec:
-                break
-            time.sleep(0.1)
-    else:
-        rclpy.spin_until_future_complete(node, fut, timeout_sec=timeout_sec)
     
-    if not fut.done():
-         raise RuntimeError(f"Timed out calling {service_name}")
-    
+    # Wait loop
+    while not fut.done():
+        # Check every 1s
+        if node.executor:
+             # In multi-threaded exec, we must sleep to yield
+             time.sleep(1.0)
+        else:
+             # In single-threaded, we spin
+             rclpy.spin_until_future_complete(node, fut, timeout_sec=1.0)
+        
+        elapsed = time.time() - start_time
+        if elapsed > 10.0 and int(elapsed) % 5 == 0:
+            node.get_logger().info(f"Waiting for Lifecycle Transition ({str(service_name)})... Elapsed: {int(elapsed)}s")
+
     resp = fut.result()
     if not resp.success:
-         raise RuntimeError(f"{service_name} returned success=False")
+        raise RuntimeError(f"{service_name} returned success=False")
