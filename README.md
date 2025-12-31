@@ -23,11 +23,13 @@ This project aims to treat the robot's navigation stack as a reliable "black box
 ### 3. Safety-First Design
 - **Readiness**: Transitions only occur when the system has verified that all necessary data (Sensor Transforms, Map Topics, etc.) is valid and available.
 - **Optimized**: Tuned specifically for the constraints of edge compute devices like the Raspberry Pi, handling variable boot times and resource constraints gracefully.
+
 Disclaimer: These systems do not claim to be 100 percent reliable or Safe, caution should still be exercised! Do your own Due Diligence!  
 
 ### 4. Fast API service
 -- **External Control**: Send commands to your navigation stack via a web api, allowing external control via a custom web app!
 -- **SLAM and NAV Support**: Basic control over your navigation stack, such as map saving, map selecting, parameters, and more.
+
 Disclaimer: The api is open, you need to design your own security solution for a production machine!
 
 ---
