@@ -4,3 +4,8 @@ __pycache__/
 .DS_Store
 maps/
 !maps/.gitkeep
+
+# ROS 2 build artifacts
+build/
+install/
+log/

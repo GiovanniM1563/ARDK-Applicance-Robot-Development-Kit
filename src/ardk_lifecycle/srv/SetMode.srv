@@ -1,0 +1,10 @@
+uint8 IDLE=0
+uint8 MAPPING=1
+uint8 NAVIGATION=2
+
+uint8 target_mode
+string map_yaml_path
+bool save_on_exit
+---
+bool success
+string message
