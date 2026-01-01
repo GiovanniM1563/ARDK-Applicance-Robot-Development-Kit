@@ -353,7 +353,7 @@ class StateManager(Node):
                 
                 # Principle 2: Exclusivity Invariant - verify SLAM process is truly dead
                 # Note: We verify process termination instead of service disappearance
-                # because ROS DDS caches service registrations for ~30-60s after process death
+                # Discovery is eventual; endpoint removal depends on DDS liveliness/lease timeouts.
                 self.transition_step = "verifying_slam_shutdown"
                 self.get_logger().info("Verifying SLAM shutdown (checking process is dead)...")
                 # Process is already None after stop() call - the stop_process_group ensures kill 

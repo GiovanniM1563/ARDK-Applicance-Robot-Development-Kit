@@ -190,7 +190,7 @@ python3 src/ardk_lifecycle/tests/cycle_test.py
 
 1. **Hardware must be running first** - Nav2 will fail to activate if `odom→base_link` TF isn't being published
 
-2. **DDS service caching** - We rely on process termination rather than service disappearance for exclusivity checks
+2. **DDS discovery timing** - Discovery is eventual; endpoint removal depends on DDS liveliness/lease timeouts and tooling caches. We do not use service disappearance as an exclusivity guarantee
 
 3. **Lifecycle manager node list** - `nav2_params.yaml` must list all 10 nodes that Nav2 Jazzy's `bringup_launch.py` actually launches, or the lifecycle manager will hang
 
