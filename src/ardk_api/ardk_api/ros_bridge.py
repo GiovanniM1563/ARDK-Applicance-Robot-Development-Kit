@@ -7,7 +7,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 # Msgs
-from ardk_lifecycle.srv import SetMode
+from ardk_lifecycle.srv import SetMode, ClearFault
 from ardk_lifecycle.msg import ARDKStatus
 from slam_toolbox.srv import SaveMap
 from nav2_msgs.srv import LoadMap
@@ -21,6 +21,7 @@ class ARDKRosBridge(Node):
         
         # --- Clients ---
         self.cli_mode = self.create_client(SetMode, '/set_mode')
+        self.cli_clear_fault = self.create_client(ClearFault, '/clear_fault')
         # We create these on demand or persistent? Persistent is faster.
         self.cli_save_map = self.create_client(SaveMap, '/slam_toolbox/save_map')
         self.cli_load_map = self.create_client(LoadMap, '/map_server/load_map')
@@ -58,10 +59,21 @@ class ARDKRosBridge(Node):
             "mode": s.mode,
             "transition_step": s.transition_step,
             "last_error": s.last_error,
+            "last_error_time": {"sec": s.last_error_time.sec, "nanosec": s.last_error_time.nanosec},
             "map_source": s.map_source,
             "tf_authority": s.tf_authority,
-            "motion_authority": s.motion_authority
+            "motion_authority": s.motion_authority,
+            "nav_stack_state": s.nav_stack_state,
+            "tf_valid": s.tf_valid,
+            "services_valid": s.services_valid
         }
+
+    async def clear_fault(self):
+        """Clear a latched fault state."""
+        if not self.cli_clear_fault.wait_for_service(timeout_sec=2.0):
+            raise RuntimeError("ClearFault service not available")
+        req = ClearFault.Request()
+        return await self._call_service(self.cli_clear_fault, req)
 
     async def save_map(self, name: str):
         # slam_toolbox requires std_msgs/String name wrapping

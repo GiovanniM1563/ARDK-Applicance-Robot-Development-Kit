@@ -67,6 +67,14 @@ async def get_status():
         raise HTTPException(status_code=503, detail="Status not yet available")
     return status
 
+@app.post("/ardk/clear_fault")
+async def clear_fault():
+    try:
+        res = await ros_manager.node.clear_fault()
+        return {"success": res.success, "message": res.message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/slam/save")
 async def save_map(req: SaveMapRequest):
     try:

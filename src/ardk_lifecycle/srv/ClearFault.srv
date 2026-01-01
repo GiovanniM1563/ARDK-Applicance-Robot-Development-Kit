@@ -1,0 +1,4 @@
+# Clear a latched fault state
+---
+bool success
+string message

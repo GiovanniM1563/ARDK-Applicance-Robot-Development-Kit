@@ -9,14 +9,16 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(slam_toolbox REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetMode.srv"
+  "srv/ClearFault.srv"
   "msg/ARDKStatus.msg"
-  DEPENDENCIES std_msgs
+  DEPENDENCIES std_msgs builtin_interfaces
 )
 
 # Install the "ardk" python package

@@ -1,6 +1,10 @@
+builtin_interfaces/Time last_error_time
 int8 mode
 string transition_step
 string last_error
 string map_source
 string tf_authority
 string motion_authority
+string nav_stack_state
+bool tf_valid
+bool services_valid

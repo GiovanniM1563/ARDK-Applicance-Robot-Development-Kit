@@ -13,10 +13,11 @@ from rclpy.executors import MultiThreadedExecutor
 from geometry_msgs.msg import Twist
 from tf2_ros import Buffer, TransformListener
 
-from ardk_lifecycle.srv import SetMode
+from ardk_lifecycle.srv import SetMode, ClearFault
 from ardk_lifecycle.msg import ARDKStatus
 from ardk.runners import slam_runner, nav_runner
 from ardk.core.readiness import wait_for_services, wait_for_tf_chain, wait_for_topic, wait_for_service_loss, wait_for_node
+from ardk.core.health_monitor import check_tf_freshness, check_required_services
 from nav2_msgs.srv import ManageLifecycleNodes, LoadMap
 from slam_toolbox.srv import SaveMap
 
@@ -32,6 +33,9 @@ class StateManager(Node):
         self.transition_step = "idle"
         self.last_error = ""
         self.last_error_time = self.get_clock().now()
+        
+        # Fault latch (Milestone 2)
+        self.fault_latched = False
         
         # Process Handles
         self.slam_proc: Optional[subprocess.Popen] = None
@@ -53,11 +57,17 @@ class StateManager(Node):
         
         self.cli_save_map = self.create_client(SaveMap, '/slam_toolbox/save_map')
 
-        # Service
+        # Services
         self.srv = self.create_service(
             SetMode, 
             'set_mode', 
             self.handle_set_mode,
+            callback_group=ReentrantCallbackGroup()
+        )
+        self.srv_clear_fault = self.create_service(
+            ClearFault,
+            'clear_fault',
+            self.handle_clear_fault,
             callback_group=ReentrantCallbackGroup()
         )
         
@@ -85,6 +95,19 @@ class StateManager(Node):
         msg.mode = self.state
         msg.transition_step = self.transition_step
         msg.last_error = self.last_error
+        msg.last_error_time = self.last_error_time.to_msg()
+        
+        # Health checks (Milestone 2)
+        msg.tf_valid = check_tf_freshness(self, self.tf_buffer)
+        msg.services_valid = check_required_services(self, self.state)
+        
+        # Nav stack state
+        if self.fault_latched:
+            msg.nav_stack_state = "faulted"
+        elif self.nav_lifecycle_active:
+            msg.nav_stack_state = "active"
+        else:
+            msg.nav_stack_state = "inactive"
         
         # Determine Authority
         if self.state == SetMode.Request.MAPPING:
@@ -104,6 +127,12 @@ class StateManager(Node):
 
     def handle_set_mode(self, req, resp):
         with self.lock:
+            # Block transitions while faulted (Milestone 2)
+            if self.fault_latched:
+                resp.success = False
+                resp.message = "System faulted. Call /clear_fault first."
+                return resp
+                
             self.get_logger().info(f"Transition Request: {self.state} -> {req.target_mode}")
             try:
                 success, msg = self._execute_transition(req)
@@ -113,11 +142,27 @@ class StateManager(Node):
                     self.state = req.target_mode
             except Exception as e:
                 self.get_logger().error(f"Transition Failed: {e}")
-                self._enter_fault()
+                self._enter_fault(str(e))
                 resp.success = False
                 resp.message = str(e)
-                self.state = 99 # FAULT/Unknown
                 
+        return resp
+
+    def handle_clear_fault(self, req, resp):
+        """Clear a latched fault and return to IDLE."""
+        with self.lock:
+            if not self.fault_latched:
+                resp.success = True
+                resp.message = "No fault to clear"
+                return resp
+            
+            self.get_logger().info("Clearing fault...")
+            self.fault_latched = False
+            self.state = SetMode.Request.IDLE
+            self.last_error = ""
+            self.transition_step = "idle"
+            resp.success = True
+            resp.message = "Fault cleared, returned to IDLE"
         return resp
 
     def _execute_transition(self, req) -> (bool, str):
@@ -145,11 +190,20 @@ class StateManager(Node):
         
         # Todo: Cancel Nav2 goals if we had that client accessible/needed
 
-    def _enter_fault(self):
-        self.get_logger().error("ENTERING FAULT STATE - KILLING EVERYTHING")
+    def _enter_fault(self, reason: str = "Unknown error"):
+        """Enter fault state - stop motion, kill processes, latch fault."""
+        self.get_logger().error(f"ENTERING FAULT STATE: {reason}")
+        self.fault_latched = True
+        self.last_error = reason
+        self.last_error_time = self.get_clock().now()
+        self.transition_step = "faulted"
+        
         self._stop_motion()
         if self.slam_proc:
-            slam_runner.deactivate(self)  # Graceful lifecycle shutdown
+            try:
+                slam_runner.deactivate(self)
+            except:
+                pass
             slam_runner.stop(self.slam_proc)
             self.slam_proc = None
         if self.nav_proc:
