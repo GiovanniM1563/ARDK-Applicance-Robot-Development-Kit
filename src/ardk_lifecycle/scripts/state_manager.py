@@ -10,7 +10,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid
 from tf2_ros import Buffer, TransformListener
 
 from ardk_lifecycle.srv import SetMode, ClearFault
@@ -46,6 +47,12 @@ class StateManager(Node):
         self.status_pub = self.create_publisher(ARDKStatus, 'ardk_status', 10)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+        
+        # Stable topics for UI (Milestone 5)
+        self.ardk_map_pub = self.create_publisher(OccupancyGrid, '/ardk/map', 10)
+        self.ardk_pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/ardk/pose', 10)
+        self._map_sub = None
+        self._pose_sub = None
 
         # Persistent Service Clients (Principle 5)
         self.cli_loc = self.create_client(ManageLifecycleNodes, "/lifecycle_manager_localization/manage_nodes")
@@ -124,6 +131,44 @@ class StateManager(Node):
             msg.motion_authority = "none"
             
         self.status_pub.publish(msg)
+
+    # --- Stable Topics Republisher (Milestone 5) ---
+    
+    def _map_callback(self, msg: OccupancyGrid):
+        """Republish map to /ardk/map."""
+        self.ardk_map_pub.publish(msg)
+    
+    def _pose_callback(self, msg: PoseWithCovarianceStamped):
+        """Republish pose to /ardk/pose."""
+        self.ardk_pose_pub.publish(msg)
+    
+    def _setup_mapping_subscribers(self):
+        """Set up subscribers for MAPPING mode."""
+        self._teardown_subscribers()
+        self._map_sub = self.create_subscription(
+            OccupancyGrid, '/map', self._map_callback, 10)
+        # slam_toolbox publishes pose as PoseWithCovarianceStamped on /pose
+        self._pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped, '/pose', self._pose_callback, 10)
+        self.get_logger().info("Stable topics: subscribed to SLAM sources")
+    
+    def _setup_navigation_subscribers(self):
+        """Set up subscribers for NAVIGATION mode."""
+        self._teardown_subscribers()
+        self._map_sub = self.create_subscription(
+            OccupancyGrid, '/map', self._map_callback, 10)
+        self._pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped, '/amcl_pose', self._pose_callback, 10)
+        self.get_logger().info("Stable topics: subscribed to NAV sources")
+    
+    def _teardown_subscribers(self):
+        """Teardown current subscribers."""
+        if self._map_sub:
+            self.destroy_subscription(self._map_sub)
+            self._map_sub = None
+        if self._pose_sub:
+            self.destroy_subscription(self._pose_sub)
+            self._pose_sub = None
 
     def handle_set_mode(self, req, resp):
         with self.lock:
@@ -235,6 +280,7 @@ class StateManager(Node):
             # Do NOT stop the process
         
         self.transition_step = "idle"
+        self._teardown_subscribers()  # Stable topics cleanup (Milestone 5)
         return True, "Switched to IDLE"
 
     def _to_mapping(self, req):
@@ -282,6 +328,7 @@ class StateManager(Node):
             return False, self.last_error
         
         self.transition_step = "idle"
+        self._setup_mapping_subscribers()  # Stable topics (Milestone 5)
         return True, "Switched to MAPPING"
 
     def _to_navigation(self, req):
@@ -368,6 +415,7 @@ class StateManager(Node):
             wait_for_tf_chain(self, self.tf_buffer, 15.0, "map", "odom", "base_link")
             
             self.transition_step = "idle"
+            self._setup_navigation_subscribers()  # Stable topics (Milestone 5)
             return True, "Switched to NAVIGATION"
             
         except Exception as e:
