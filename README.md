@@ -1,6 +1,6 @@
 # ARDK - Appliance Robot Development Kit
 
-A ROS 2 orchestration layer that manages mode transitions between SLAM mapping and Nav2 navigation.
+A ROS 2 orchestration layer that manages mode transitions between SLAM mapping and Nav2 navigationm with support for more stacks on the way.
 
 **Status: Work in Progress** - Core functionality is implemented and tested on a single platform. Expect rough edges.
 
@@ -18,20 +18,19 @@ This handles those pieces so you can focus on your application logic.
 
 **The lifecycle problem**: Nav2 and slam_toolbox use ROS 2 lifecycle nodes. Getting them to start, configure, activate, and deactivate in the right order—especially when switching between modes—requires careful sequencing. This handles that.
 
-**The exclusivity problem**: You can't run SLAM and AMCL at the same time (they both want to publish the map→odom transform). This enforces mutual exclusivity and handles the teardown/startup sequence.
+**The exclusivity problem**: Enforces mutual exclusivity and handles the teardown/startup sequence.
 
 **The integration problem**: ROS 2 command-line tools work fine for development, but integrating with external systems (web dashboards, fleet managers, custom apps) requires an API layer. This provides one.
 
 ## What This Is
 
-A state manager and REST API for switching a robot between Mapping, Navigation, and Idle modes. It handles the lifecycle management of `slam_toolbox` and `nav2` so you don't have to write custom scripts or actively manage state.
+A state manager and REST API for switching a robot between Mapping, Navigation, and Idle modes (as of now). It handles the lifecycle management of `slam_toolbox` and `nav2` so you don't have to write custom scripts or actively manage state.
 
 ## Limitations
 
 - Not hardened for production (no authentication, limited error recovery)
-- Only tested on Raspberry Pi 5 / Ubuntu 24.04 / ROS 2 Jazzy
-- Requires your hardware layer (odometry, LiDAR) to be running separately
-- Configuration files (nav2_params.yaml, slam_params.yaml) not included—you bring your own
+- Requires your hardware layer (odometry, LiDAR) to be configured on your own 
+
 
 ---
 
@@ -163,7 +162,7 @@ python3 src/ardk_lifecycle/tests/cycle_test.py
 
 1. **Hardware must be running first** - Nav2 will fail to activate if `odom→base_link` TF isn't being published
 
-2. **DDS service caching** - ROS 2 DDS caches service registrations for ~60s after process death, so we rely on process termination rather than service disappearance for exclusivity checks
+2. **DDS service caching** - We rely on process termination rather than service disappearance for exclusivity checks
 
 3. **Lifecycle manager node list** - `nav2_params.yaml` must list all 10 nodes that Nav2 Jazzy's `bringup_launch.py` actually launches, or the lifecycle manager will hang
 
@@ -195,8 +194,14 @@ src/ardk_api/
 
 ---
 
-## Verified On
+## Future Work
 
-- Raspberry Pi 5
-- Ubuntu 24.04
-- ROS 2 Jazzy
+1. **Multiple stacks/Modularity** - Support for more stacks than just Nav2 and SLAM Toolbox or "mix and match" of supported modules. 
+2. **Simulator Integration** - Support for ROS 2 simulators like Gazebo or Ignition.
+3. **Control MUX** - Support for multiple control inputs and authorities 
+4. **Security** - Add authentication and authorization to the API.
+5. **Testing** - Add more tests and test coverage.
+6. **Reliability** - Add more reliability and fault tolerance/handling. 
+
+
+
