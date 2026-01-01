@@ -3,10 +3,15 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
+import os
 
 from ardk_api.ros_bridge import ros_manager
+from ardk_api import map_catalog
 from geometry_msgs.msg import PoseStamped
 from rclpy.time import Time
+
+# Configurable map storage
+MAP_STORAGE_DIR = os.environ.get("ARDK_MAP_DIR", os.path.expanduser("~/ARDK_2/maps"))
 
 # --- Models ---
 class ModeRequest(BaseModel):
@@ -18,6 +23,13 @@ class SaveMapRequest(BaseModel):
 
 class LoadMapRequest(BaseModel):
     path: str
+
+class MapSaveRequest(BaseModel):
+    name: str
+    overwrite: bool = False
+
+class MapLoadRequest(BaseModel):
+    name: str
 
 class PoseRequest(BaseModel):
     x: float
@@ -112,7 +124,61 @@ async def compute_route(req: PoseRequest):
         points = [{"x": p.pose.position.x, "y": p.pose.position.y} for p in path.poses]
         return {"count": len(points), "path": points}
     except Exception as e:
-        # 500 or 400? 500 for ROS errors
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Map Catalog API (Milestone 3) ---
+
+@app.post("/maps/save")
+async def save_map_to_catalog(req: MapSaveRequest):
+    """Save current map to catalog with name."""
+    try:
+        # Validate name first
+        if not map_catalog.validate_name(req.name):
+            raise HTTPException(status_code=400, detail="Invalid name. Use alphanumeric and underscore only (1-50 chars).")
+        
+        # Save to temp location first via SLAM
+        temp_prefix = f"/tmp/ardk_map_{req.name}"
+        res = await ros_manager.node.save_map(temp_prefix)
+        if res.result > 1:
+            raise HTTPException(status_code=500, detail=f"SLAM save_map failed with code {res.result}")
+        
+        # Move to catalog with metadata
+        metadata = map_catalog.save_map_to_catalog(
+            name=req.name,
+            source_prefix=temp_prefix,
+            base_dir=MAP_STORAGE_DIR,
+            overwrite=req.overwrite
+        )
+        return {"success": True, "map": metadata}
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/maps")
+async def list_maps_catalog():
+    """List all maps in catalog."""
+    return {"maps": map_catalog.list_maps(MAP_STORAGE_DIR)}
+
+@app.post("/maps/load")
+async def load_map_from_catalog(req: MapLoadRequest):
+    """Load a map by name and switch to NAVIGATION."""
+    try:
+        if not map_catalog.validate_name(req.name):
+            raise HTTPException(status_code=400, detail="Invalid name format.")
+        
+        map_path = map_catalog.get_map_path(req.name, MAP_STORAGE_DIR)
+        if not map_path:
+            raise HTTPException(status_code=404, detail=f"Map '{req.name}' not found in catalog.")
+        
+        # Switch to NAVIGATION with this map
+        res = await ros_manager.node.set_mode(2, map_path)  # 2 = NAVIGATION
+        return {"success": res.success, "message": res.message, "map_path": map_path}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 def main():
